@@ -18,7 +18,7 @@ provider "aws" {
   secret_key = var.aws_secret_key
 }
 
-module "vpc" {
+module "learn_vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "2.21.0"
 
@@ -34,55 +34,29 @@ module "vpc" {
   tags = var.vpc_tags
 }
 
-data "aws_ami" "ubuntu" {
-  most_recent = true
-
-  filter {
-    name   = "name"
-    values = ["ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-*"]
-  }
-
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
-
-  owners = ["099720109477"] # Canonical
+module "ec2_instance" {
+  source = "./modules/compute"
+  # モジュール内の変数に値を設定。左辺はモジュールの変数、右辺は上記vpcモジュールの値
+  security_group = module.security_group.sg_id
+  public_subnets = module.learn_vpc.public_subnets
 }
 
-
-resource "aws_instance" "example" {
-  ami                    = data.aws_ami.ubuntu.id
-  subnet_id              = module.vpc.public_subnets[0]
-  instance_type          = "t2.micro"
-  vpc_security_group_ids = [aws_security_group.sg_8080.id]
-  user_data              = <<-EOF
-              #!/bin/bash
-              apt-get update
-              apt-get install -y apache2
-              sed -i -e 's/80/8080/' /etc/apache2/ports.conf
-              echo "Hello World" > /var/www/html/index.html
-              systemctl restart apache2
-              EOF
-  tags = {
-    Name = "terraform-learn-move-ec2"
-  }
+module "security_group" {
+  source = "./modules/security_group"
+  vpc_id = module.learn_vpc.vpc_id
 }
 
-resource "aws_security_group" "sg_8080" {
-  vpc_id = module.vpc.vpc_id
-  name   = "terraform-learn-move-sg"
-  ingress {
-    from_port   = "8080"
-    to_port     = "8080"
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-  // connectivity to ubuntu mirrors is required to run `apt-get update` and `apt-get install apache2`
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+moved {
+  from = aws_instance.example
+  to   = module.ec2_instance.aws_instance.example
+}
+
+moved {
+  from = aws_security_group.sg_8080
+  to   = module.security_group.aws_security_group.sg_8080
+}
+
+moved {
+  from = module.vpc
+  to   = module.learn_vpc
 }
